@@ -269,13 +269,13 @@ def CreateInitialState(process, snapshot):
         endpoint   = int(execute("nm ./%s | grep %s"%(target.name, target.endpoint)).split()[0],16)
     except:
         FATAL("Error finding the snapshot start/end addresses")
-    
+    print("Startpoint: %x, Endpoint: %x"%(startpoint, endpoint))
     ### Lets replace the symbolic start / end points with their virtual addresses
     target.startpoint = startpoint - textmem.offset + textmem.startaddr
     target.endpoint = endpoint - textmem.offset + textmem.startaddr
-    
+    print("Target Startpoint: %x, Target Endpoint: %x" % (target.startpoint, target.endpoint))
     ### Next we disassmble .text to look for all valid breakpoint locations
-    output = execute("objdump  -d -j .text %s"%(target.name)).decode()
+    output = execute("objdump  -d -w -j .text %s"%(target.name)).decode()
     lines = output[output.find(".text:")+6:].replace('\n\n','\n').split('\n')
     
     ### This is a bit of a hacky way to parse out breakpoint locations (sorry!)
@@ -286,9 +286,13 @@ def CreateInitialState(process, snapshot):
         bpaddr = int(items[0][0:-1],16) - textmem.offset + textmem.startaddr
         ### Add potential breakpoints to our coverage
         target.coverage_bps[bpaddr] = None
-
+    print("Creating breakpoints")
     ### Add gratuitous breakpoint across all of .text
+    counter = 0
+    total = len(target.coverage_bps)
     for bpaddr in list(target.coverage_bps.keys()):
+        print("Breakpoints initialized: %d %%"%((counter * 100)/total), end='\r')
+        counter += 1
         target.coverage_bps[bpaddr] = add_breakpoint(process, bpaddr)
         
     print("Applied %s breakpoints for coverage guidance"%(len(list(target.coverage_bps.keys()))))
@@ -300,8 +304,11 @@ def CreateInitialState(process, snapshot):
         ### Catch the next event
         event = process.waitEvent()
         inst = process.getInstrPointer()
+        print("%x" % (inst))
         if (event.name != "SIGTRAP"):
-            FATAL("Expecting SIGTRAP but got %s @ 0x%x"%(event.name, inst))
+            regs = process.getregs()
+            print("%x"%(inst))
+            #FATAL("Expecting SIGTRAP but got %s @ 0x%x"%(event.name, inst))
             
         ### We hit a breakpoint, remove it
         delete_breakpoint(target.coverage_bps[inst-1])
@@ -315,12 +322,12 @@ def CreateInitialState(process, snapshot):
     snapshot.savestate()
     
     ### Search for the payload address across the entire target memory space
-    ptr = snapshot.locate(target.payload)
-    if ptr == -1:
-        FATAL("cannot find payload in target memory")
-
+    #ptr = snapshot.locate(target.payload)
+    #if ptr == -1:
+    #    FATAL("cannot find payload in target memory")
+    #
     ### Keep note of the memory location for the payload
-    target.payloadptr = ptr
+    #target.payloadptr = ptr
     
 def Fuzz(process):
     ### Select a random corpus and mutate it
@@ -344,7 +351,10 @@ def Fuzz(process):
     target.mutation = bytes(corpus)
     
     ### Insert the fuzz case into target memory
-    write_bytes(process.pid, target.payloadptr, target.mutation)
+    #write_bytes(process.pid, target.payloadptr, target.mutation)
+    ### Insert te fuzz case into a file
+    with open(target.inputFilename, "wb") as file:
+        file.write(target.mutation)
 
     ### Run Proccess from the startpoint address to process the fuzz case
     process.cont()
@@ -410,12 +420,16 @@ def CheckFuzzResult(process):
 ### of our snapshot fuzzer, our target location and arguments, our coverage and
 ### corpus cache   
 class target:
-    startpoint   = "startf"  # our symbol name for startpoint (will get replaced with virtual address)
-    endpoint     = "endf"    # our symbol name for endpoint (will get replaced with virtual address)
-    name         = "target"  # our target name
-    payload      = b'----------------'
-    targetArgs   = [b'./'+name.encode() ,payload]
-    payloadptr   = 0x0
+#    startpoint   = "startf"  # our symbol name for startpoint (will get replaced with virtual address)
+#    endpoint     = "endf"    # our symbol name for endpoint (will get replaced with virtual address)
+    startpoint = "InitializeSdkObjects"  # our symbol name for startpoint (will get replaced with virtual address)
+    endpoint = "DestroySdkObjects"  # our symbol name for endpoint (will get replaced with virtual address)
+#    name         = "target"  # our target name
+    name         = "ImportScene-prod"  # our target name
+    #payload      = b'----------------'
+    inputFilename = 'input'
+    targetArgs   = [b'./'+name.encode() ,inputFilename]
+    #payloadptr   = 0x0
     mutation     = b'----------------'
     corpus       = []
     cases        = 0
@@ -447,7 +461,7 @@ if __name__ == "__main__":
     print ("\nStarting Snapshot Fuzzer...\n")
     target.starttime = datetime.datetime.now()
     print ("Corpus discovery coverage growth:")
-    
+    #exit(1)
     ### Behold, our "tight" fuzzer loop
     while (1):
         ### Track our fuzz case
